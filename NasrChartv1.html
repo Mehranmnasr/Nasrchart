@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>نمودار قیمت بیت‌کوین</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+      background-color: #004080;
+      color: #fff;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    #chart {
+      width: 90%;
+      max-width: 700px;
+      height: 400px;
+      margin: 20px auto;
+      border-radius: 10px;
+      background-color: white;
+    }
+    select, button {
+      font-size: 16px;
+      margin: 10px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>نمودار قیمت بیت‌کوین (USD)</h2>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+  <select id="timeFrame">
+    <option value="live">زنده</option>
+    <option value="1W">1H</option>
+    <option value="1M">4H</option>
+    <option value="3M" selected>1D</option>
+    <option value="6M">1W</option>
+    <option value="1Y">1M</option>
+  </select>
+
+  <button id="toggleHorizontalLineBtn">📏 ابزار خط افقی</button>
+  <button id="drawPathBtn">✏️ ابزار مسیر</button>
+  <button id="clearAllBtn">🗑 پاک کردن تمام خطوط و مسیرها</button>
+  <button id="screenshotBtn">📸 گرفتن اسکرین‌شات</button>
+
+  <div id="chart"></div>
+  <div id="currentPrice">در حال بارگذاری...</div>
+
+  <script src="https://unpkg.com/lightweight-charts@4.0.0/dist/lightweight-charts.standalone.production.js"></script>
+
+  <script>
+    const chartContainer = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(chartContainer, {
+      width: chartContainer.clientWidth,
+      height: 400,
+      layout: { backgroundColor: '#ffffff', textColor: '#000' },
+      timeScale: { timeVisible: true }
+    });
+
+    const candleSeries = chart.addCandlestickSeries();
+    let priceLines = [];
+    let pathSeries = null;
+    let pathPoints = [];
+    let isHorizontalLineActive = false;
+    let isPathDrawing = false;
+
+    document.getElementById("toggleHorizontalLineBtn").addEventListener("click", () => {
+      isHorizontalLineActive = !isHorizontalLineActive;
+      alert(isHorizontalLineActive ? "ابزار خط افقی فعال شد!" : "ابزار خط افقی غیرفعال شد.");
+    });
+
+    document.getElementById("drawPathBtn").addEventListener("click", () => {
+      isPathDrawing = !isPathDrawing;
+
+      if (isPathDrawing) {
+        pathPoints = [];
+        if (pathSeries) {
+          chart.removeSeries(pathSeries);
+          pathSeries = null;
+        }
+        pathSeries = chart.addLineSeries({
+          color: 'orange',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+        });
+        alert("حالت مسیر فعال شد!");
+      } else {
+        alert("حالت مسیر غیرفعال شد.");
+      }
+    });
+
+    document.getElementById("clearAllBtn").addEventListener("click", () => {
+      priceLines.forEach(line => candleSeries.removePriceLine(line));
+      priceLines = [];
+
+      if (pathSeries) {
+        chart.removeSeries(pathSeries);
+        pathSeries = null;
+        pathPoints = [];
+        isPathDrawing = false;
+      }
+
+      alert("همه خطوط و مسیرها پاک شدند!");
+    });
+
+    document.getElementById("screenshotBtn").addEventListener("click", () => {
+        html2canvas(document.getElementById("chart")).then(canvas => {
+            const imageURL = canvas.toDataURL("image/png");
+            const link = document.createElement("a");
+            link.href = imageURL;
+            link.download = "chart_screenshot.png";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    });
+
+    chart.subscribeClick(param => {
+      if (!param || !param.point) return;
+
+      const price = candleSeries.coordinateToPrice(param.point.y);
+
+      if (isHorizontalLineActive && price !== undefined) {
+        const clickedIndex = priceLines.findIndex(line => {
+          const y = candleSeries.priceToCoordinate(line.options().price);
+          return Math.abs(y - param.point.y) < 5;
+        });
+
+        if (clickedIndex >= 0) {
+          candleSeries.removePriceLine(priceLines[clickedIndex]);
+          priceLines.splice(clickedIndex, 1);
+        } else {
+          const newLine = candleSeries.createPriceLine({
+            price: price,
+            color: 'red',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'خط افقی',
+          });
+          priceLines.push(newLine);
+        }
+      }
+
+      if (isPathDrawing) {
+        const time = param.time;
+        if (time !== undefined && price !== undefined) {
+          pathPoints.push({ time, value: price });
+          if (pathSeries) {
+            pathSeries.setData(pathPoints);
+          }
+        }
+      }
+    });
+
+    async function fetchCandles(days) {
+      try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/coins/bitcoin/ohlc?vs_currency=usd&days=${days}`);
+        const data = await res.json();
+        return data.map(c => ({ time: Math.floor(c[0] / 1000), open: c[1], high: c[2], low: c[3], close: c[4] }));
+      } catch (error) {
+        console.error("خطا در دریافت داده‌ها", error);
+        return [];
+      }
+    }
+
+    async function updateChart(days) {
+      const data = await fetchCandles(days);
+      if (data.length > 0) {
+        candleSeries.setData(data);
+        document.getElementById("currentPrice").textContent = `آخرین قیمت: $${data[data.length - 1].close.toFixed(2)}`;
+        chart.timeScale().fitContent();
+      } else {
+        document.getElementById("currentPrice").textContent = "خطا در دریافت داده‌ها";
+      }
+    }
+
+    document.getElementById("timeFrame").addEventListener("change", () => {
+      const tf = document.getElementById("timeFrame").value;
+      if (tf === "live") updateChart(1);
+      else if (tf === "1W") updateChart(7);
+      else if (tf === "1M") updateChart(30);
+      else if (tf === "3M") updateChart(90);
+      else if (tf === "6M") updateChart(180);
+      else if (tf === "1Y") updateChart(365);
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      updateChart(90);
+    });
+  </script>
+</body>
+</html>
